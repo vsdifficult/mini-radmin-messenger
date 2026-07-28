@@ -1,8 +1,10 @@
-import uuid 
-from pydantic import BaseModel 
+import uuid
+from dataclasses import dataclass, field
 
-class Contact(BaseModel):
+
+@dataclass
+class Contact:
     id: uuid.UUID
     name: str
     ip: str
-    chats: list[uuid.UUID] = []
+    chats: list[uuid.UUID] = field(default_factory=list)
