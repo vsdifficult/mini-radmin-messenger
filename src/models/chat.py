@@ -10,4 +10,4 @@ class Message(BaseModel):
 class Chat(BaseModel):
     id: uuid.UUID
     contact_name: str
-    messages: list[Message]
+    messages: list[uuid.UUID] = []

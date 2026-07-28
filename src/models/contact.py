@@ -5,4 +5,4 @@ class Contact(BaseModel):
     id: uuid.UUID
     name: str
     ip: str
-
+    chats: list[uuid.UUID] = []
