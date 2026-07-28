@@ -38,33 +38,40 @@ class AsyncVoiceEngine:
         self.muted = is_muted
 
     def _input_callback(self, indata, frames, time, status):
-        if self.running and not self.muted and self.loop and self.input_queue:
-            self.loop.call_soon_threadsafe(self._safe_put_input, indata.copy())
+        try:
+            if self.running and not self.muted and self.loop and self.input_queue:
+                self.loop.call_soon_threadsafe(self._safe_put_input, indata.copy())
+        except Exception as exc:
+            print(f"[Voice Input Callback Error]: {exc}")
 
     def _output_callback(self, outdata, frames, time, status):
-        outdata.fill(0)
-        if not self.running or not self.playback_queue:
-            return
-        chunks = []
-        remaining = frames
-        while remaining > 0:
-            try:
-                chunk = self.playback_queue.get_nowait()
-            except queue.Empty:
-                break
-            chunk = chunk.reshape(-1, self.channels)
-            if len(chunk) > remaining:
-                chunks.append(chunk[:remaining])
-                tail = chunk[remaining:]
-                if len(tail):
-                    self._safe_put_playback(tail.copy())
-                remaining = 0
-            else:
-                chunks.append(chunk)
-                remaining -= len(chunk)
-        if chunks:
-            audio = np.vstack(chunks)[:frames] * self.speaker_volume
-            outdata[:len(audio)] = np.clip(audio, -1.0, 1.0)
+        try:
+            outdata.fill(0)
+            if not self.running or not self.playback_queue:
+                return
+            chunks = []
+            remaining = frames
+            while remaining > 0:
+                try:
+                    chunk = self.playback_queue.get_nowait()
+                except queue.Empty:
+                    break
+                chunk = chunk.reshape(-1, self.channels)
+                if len(chunk) > remaining:
+                    chunks.append(chunk[:remaining])
+                    tail = chunk[remaining:]
+                    if len(tail):
+                        self._safe_put_playback(tail.copy())
+                    remaining = 0
+                else:
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+            if chunks:
+                audio = np.vstack(chunks)[:frames] * self.speaker_volume
+                outdata[:len(audio)] = np.clip(audio, -1.0, 1.0)
+        except Exception as exc:
+            outdata.fill(0)
+            print(f"[Voice Output Callback Error]: {exc}")
 
     def _safe_put_input(self, data):
         if not self.input_queue:

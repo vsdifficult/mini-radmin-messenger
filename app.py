@@ -60,7 +60,16 @@ class MessengerWindow(QMainWindow):
         left.addWidget(QLabel("Чаты")); left.addWidget(self.search); left.addWidget(self.chat_list, 1)
 
         right = QVBoxLayout()
+        chat_header = QHBoxLayout()
+        self.avatar = QLabel("💬")
         self.header = QLabel("Выберите чат или добавьте контакт Radmin VPN")
+        self.chat_call_button = QPushButton("📞")
+        self.chat_call_button.setToolTip("Позвонить контакту")
+        self.chat_call_button.clicked.connect(self.toggle_voice)
+        self.chat_call_button.setEnabled(False)
+        chat_header.addWidget(self.avatar)
+        chat_header.addWidget(self.header, 1)
+        chat_header.addWidget(self.chat_call_button)
         self.messages = QTextBrowser(); self.messages.setOpenExternalLinks(True)
         composer = QHBoxLayout()
         self.input = QLineEdit(); self.input.setPlaceholderText("Сообщение")
@@ -76,7 +85,7 @@ class MessengerWindow(QMainWindow):
         self.speaker_slider.valueChanged.connect(lambda value: self.voice_engine and self.voice_engine.set_speaker_volume(value))
         call_controls.addWidget(QLabel("Mic")); call_controls.addWidget(self.mic_slider)
         call_controls.addWidget(QLabel("Speaker")); call_controls.addWidget(self.speaker_slider)
-        right.addWidget(self.header); right.addWidget(self.messages, 1); right.addLayout(composer); right.addLayout(call_controls); right.addWidget(self.status)
+        right.addLayout(chat_header); right.addWidget(self.messages, 1); right.addLayout(composer); right.addLayout(call_controls); right.addWidget(self.status)
         main.addLayout(left, 1); main.addLayout(right, 3)
 
         self.setStyleSheet('''
@@ -119,7 +128,9 @@ class MessengerWindow(QMainWindow):
         if not items: return
         chat = items[0].data(Qt.UserRole)
         self.current_chat, self.current_contact = chat.id, chat.contact_id
-        self.header.setText(f"{chat.contact_name} · {chat.contact_ip}")
+        self.avatar.setText(chat.contact_name[:1].upper() if chat.contact_name else "👤")
+        self.header.setText(f"<b>{chat.contact_name}</b><br><span style='color:#8aa2b6'>Radmin VPN: {chat.contact_ip}</span>")
+        self.chat_call_button.setEnabled(True)
         self.load_messages()
         self.start_text(chat.contact_ip)
 
@@ -219,6 +230,8 @@ class MessengerWindow(QMainWindow):
         self.run_net(lambda: self.voice_engine.start(target_ip, lambda bars: self.network_event.emit({"type": "system", "text": f"{message} · уровень {bars}"})))
         self.call_active = True
         self.call_action.setText("☎ Завершить")
+        self.chat_call_button.setText("☎")
+        self.chat_call_button.setToolTip("Завершить звонок")
         self.status.setText(message)
 
     def stop_voice_call(self, message, notify_peer=True):
@@ -228,6 +241,8 @@ class MessengerWindow(QMainWindow):
             self.run_net(lambda: self.text_engine and self.text_engine.send_payload({"type": "call_end", "owner_id": str(self.owner_id)}))
         self.call_active = False
         self.call_action.setText("📞 Позвонить")
+        self.chat_call_button.setText("📞")
+        self.chat_call_button.setToolTip("Позвонить контакту")
         self.status.setText(message)
 
     def toggle_mute(self):
