@@ -6,7 +6,7 @@ import uuid
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAction, QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QLineEdit, QMainWindow, QMessageBox, QPushButton, QTextBrowser,
+    QListWidgetItem, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSlider, QTextBrowser,
     QToolBar, QVBoxLayout, QWidget
 )
 
@@ -30,6 +30,9 @@ class MessengerWindow(QMainWindow):
         self.current_contact = None
         self.text_engine = None
         self.voice_engine = None
+        self.call_ip = None
+        self.call_active = False
+        self.muted = False
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
 
@@ -43,7 +46,8 @@ class MessengerWindow(QMainWindow):
         toolbar = QToolBar("main")
         self.addToolBar(toolbar)
         add = QAction("➕ Контакт", self); add.triggered.connect(self.add_contact); toolbar.addAction(add)
-        call = QAction("🎙 Голос", self); call.triggered.connect(self.toggle_voice); toolbar.addAction(call)
+        self.call_action = QAction("📞 Позвонить", self); self.call_action.triggered.connect(self.toggle_voice); toolbar.addAction(self.call_action)
+        self.mute_action = QAction("🎙 Микрофон", self); self.mute_action.triggered.connect(self.toggle_mute); toolbar.addAction(self.mute_action)
         attach = QAction("📎 Файл", self); attach.triggered.connect(self.attach_file); toolbar.addAction(attach)
 
         root = QWidget(); self.setCentralWidget(root)
@@ -65,7 +69,14 @@ class MessengerWindow(QMainWindow):
         send = QPushButton("Отправить"); send.clicked.connect(self.send_message)
         composer.addWidget(self.input, 1); composer.addWidget(send)
         self.status = QLabel("Оффлайн")
-        right.addWidget(self.header); right.addWidget(self.messages, 1); right.addLayout(composer); right.addWidget(self.status)
+        call_controls = QHBoxLayout()
+        self.mic_slider = QSlider(Qt.Horizontal); self.mic_slider.setRange(0, 200); self.mic_slider.setValue(100)
+        self.speaker_slider = QSlider(Qt.Horizontal); self.speaker_slider.setRange(0, 200); self.speaker_slider.setValue(100)
+        self.mic_slider.valueChanged.connect(lambda value: self.voice_engine and self.voice_engine.set_mic_volume(value))
+        self.speaker_slider.valueChanged.connect(lambda value: self.voice_engine and self.voice_engine.set_speaker_volume(value))
+        call_controls.addWidget(QLabel("Mic")); call_controls.addWidget(self.mic_slider)
+        call_controls.addWidget(QLabel("Speaker")); call_controls.addWidget(self.speaker_slider)
+        right.addWidget(self.header); right.addWidget(self.messages, 1); right.addLayout(composer); right.addLayout(call_controls); right.addWidget(self.status)
         main.addLayout(left, 1); main.addLayout(right, 3)
 
         self.setStyleSheet('''
@@ -157,21 +168,73 @@ class MessengerWindow(QMainWindow):
             self.load_messages(); self.refresh_chats(); self.status.setText("Онлайн")
         elif payload.get("type") == "typing":
             self.status.setText("Печатает..." if payload.get("is_typing") else "Онлайн")
+        elif payload.get("type") == "call_invite":
+            self.handle_call_invite()
+        elif payload.get("type") == "call_accept":
+            self.start_voice_call("Звонок принят")
+        elif payload.get("type") == "call_end":
+            self.stop_voice_call("Звонок завершен собеседником", notify_peer=False)
         elif payload.get("type") == "system":
             self.status.setText(payload.get("text", ""))
         elif payload.get("type") == "refresh":
             self.load_messages(); self.refresh_chats()
 
+    def selected_chat(self):
+        items = self.chat_list.selectedItems()
+        return items[0].data(Qt.UserRole) if items else None
+
     def toggle_voice(self):
-        if not self.current_chat:
-            QMessageBox.information(self, "Голос", "Сначала выберите чат")
+        chat = self.selected_chat()
+        if not chat:
+            QMessageBox.information(self, "Звонок", "Сначала выберите чат")
             return
-        chat = self.chat_list.selectedItems()[0].data(Qt.UserRole)
-        if self.voice_engine and self.voice_engine.running:
-            self.run_net(lambda: self.voice_engine.stop()); self.status.setText("Голос выключен")
+        self.call_ip = chat.contact_ip
+        if self.call_active:
+            self.stop_voice_call("Звонок завершен")
+            return
+        self.status.setText("Исходящий звонок...")
+        self.run_net(lambda: self.text_engine and self.text_engine.send_payload({"type": "call_invite", "owner_id": str(self.owner_id)}))
+
+    def handle_call_invite(self):
+        answer = QMessageBox.question(self, "Входящий звонок", "Принять голосовой звонок?", QMessageBox.Yes | QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            chat = self.selected_chat()
+            self.call_ip = chat.contact_ip if chat else self.call_ip
+            self.run_net(lambda: self.text_engine and self.text_engine.send_payload({"type": "call_accept", "owner_id": str(self.owner_id)}))
+            self.start_voice_call("Звонок начался")
         else:
+            self.run_net(lambda: self.text_engine and self.text_engine.send_payload({"type": "call_end", "owner_id": str(self.owner_id)}))
+
+    def start_voice_call(self, message):
+        chat = self.selected_chat()
+        target_ip = self.call_ip or (chat.contact_ip if chat else None)
+        if not target_ip:
+            self.status.setText("Нет IP для звонка")
+            return
+        if not self.voice_engine:
             self.voice_engine = AsyncVoiceEngine()
-            self.run_net(lambda: self.voice_engine.start(chat.contact_ip, lambda bars: self.network_event.emit({"type": "system", "text": f"Голос {bars}"})))
+        self.voice_engine.set_mic_volume(self.mic_slider.value())
+        self.voice_engine.set_speaker_volume(self.speaker_slider.value())
+        self.voice_engine.set_mute(self.muted)
+        self.run_net(lambda: self.voice_engine.start(target_ip, lambda bars: self.network_event.emit({"type": "system", "text": f"{message} · уровень {bars}"})))
+        self.call_active = True
+        self.call_action.setText("☎ Завершить")
+        self.status.setText(message)
+
+    def stop_voice_call(self, message, notify_peer=True):
+        if self.voice_engine and self.voice_engine.running:
+            self.run_net(lambda: self.voice_engine.stop())
+        if notify_peer:
+            self.run_net(lambda: self.text_engine and self.text_engine.send_payload({"type": "call_end", "owner_id": str(self.owner_id)}))
+        self.call_active = False
+        self.call_action.setText("📞 Позвонить")
+        self.status.setText(message)
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        if self.voice_engine:
+            self.voice_engine.set_mute(self.muted)
+        self.mute_action.setText("🔇 Микрофон выкл" if self.muted else "🎙 Микрофон")
 
     def closeEvent(self, event):
         if self.text_engine: self.run_net(lambda: self.text_engine.stop())
