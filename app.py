@@ -262,9 +262,16 @@ class MessengerWindow(QMainWindow):
         toolbar = QToolBar("main")
         self.addToolBar(toolbar)
         
-        add = QAction("➕ Контакт", self)
-        add.triggered.connect(self.add_contact)
-        toolbar.addAction(add)
+        # Кнопка "Создать контакт"
+        add_contact_action = QAction("➕ Создать контакт", self)
+        add_contact_action.triggered.connect(self.add_contact)
+        toolbar.addAction(add_contact_action)
+        
+        # Кнопка "Начать чат" (будет активна только когда есть выбранный контакт)
+        self.start_chat_action = QAction("💬 Начать чат", self)
+        self.start_chat_action.triggered.connect(self.start_new_chat)
+        self.start_chat_action.setEnabled(False)
+        toolbar.addAction(self.start_chat_action)
         
         # Разделитель
         toolbar.addSeparator()
@@ -281,27 +288,38 @@ class MessengerWindow(QMainWindow):
         main = QHBoxLayout(root)
 
         left = QVBoxLayout()
+        
+        # Заголовок "Чаты"
+        chats_label = QLabel("Чаты")
+        chats_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 5px;")
+        left.addWidget(chats_label)
+        
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Поиск чатов и сообщений")
+        self.search.setPlaceholderText("Поиск чатов и контактов")
         self.search.textChanged.connect(self.refresh_chats)
-        self.chat_list = QListWidget()
-        self.chat_list.itemSelectionChanged.connect(self.open_selected_chat)
-        left.addWidget(QLabel("Чаты"))
         left.addWidget(self.search)
+        
+        self.chat_list = QListWidget()
+        self.chat_list.itemSelectionChanged.connect(self.on_chat_selected)
+        self.chat_list.itemDoubleClicked.connect(self.open_selected_chat)
         left.addWidget(self.chat_list, 1)
 
         right = QVBoxLayout()
         chat_header = QHBoxLayout()
         self.avatar = QLabel("💬")
         self.avatar.setAlignment(Qt.AlignCenter)
-        self.avatar.setFixedSize(40, 40)
-        self.avatar.setStyleSheet("font-size: 24px;")
+        self.avatar.setFixedSize(50, 50)
+        self.avatar.setStyleSheet("font-size: 28px; background: transparent;")
         
-        self.header = QLabel("Выберите чат или добавьте контакт Radmin VPN")
+        self.header = QLabel("Выберите чат или создайте новый контакт")
+        self.header.setStyleSheet("font-size: 14px;")
+        
         self.chat_call_button = QPushButton("📞")
         self.chat_call_button.setToolTip("Позвонить контакту")
         self.chat_call_button.clicked.connect(self.start_outgoing_call)
         self.chat_call_button.setEnabled(False)
+        self.chat_call_button.setFixedSize(40, 40)
+        
         chat_header.addWidget(self.avatar)
         chat_header.addWidget(self.header, 1)
         chat_header.addWidget(self.chat_call_button)
@@ -311,23 +329,19 @@ class MessengerWindow(QMainWindow):
         
         composer = QHBoxLayout()
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Сообщение")
+        self.input.setPlaceholderText("Введите сообщение...")
         self.input.returnPressed.connect(self.send_message)
         self.input.textEdited.connect(lambda: self.run_net(lambda: self.text_engine and self.text_engine.send_typing(True)))
         
-        # Создаем кнопку отправки, но она будет скрыта на главной странице
+        # Создаем кнопку отправки
         self.send_button = QPushButton("Отправить")
         self.send_button.clicked.connect(self.send_message)
+        self.send_button.setFixedWidth(100)
         composer.addWidget(self.input, 1)
         composer.addWidget(self.send_button)
         
         self.status = QLabel("Оффлайн")
-        
-        # Сохраняем контейнеры для управления видимостью
-        self.chat_header_widget = chat_header
-        self.composer_widget = composer
-        self.messages_widget = self.messages
-        self.status_widget = self.status
+        self.status.setStyleSheet("padding: 5px; font-size: 12px;")
         
         right.addLayout(chat_header)
         right.addWidget(self.messages, 1)
@@ -335,6 +349,18 @@ class MessengerWindow(QMainWindow):
         right.addWidget(self.status)
         main.addLayout(left, 1)
         main.addLayout(right, 3)
+
+    def on_chat_selected(self):
+        """Обработчик выбора чата в списке"""
+        items = self.chat_list.selectedItems()
+        if items:
+            self.start_chat_action.setEnabled(True)
+        else:
+            self.start_chat_action.setEnabled(False)
+
+    def start_new_chat(self):
+        """Начать чат с выбранным контактом"""
+        self.open_selected_chat()
 
     def apply_theme(self):
         """Применяет выбранную тему"""
@@ -400,7 +426,7 @@ class MessengerWindow(QMainWindow):
                 font-size: {font_size}px;
             }}
             QListWidget::item {{ 
-                padding: 10px; 
+                padding: 12px; 
                 border-bottom: 1px solid {t["border"]}; 
             }}
             QListWidget::item:selected {{ 
@@ -436,6 +462,9 @@ class MessengerWindow(QMainWindow):
             QToolBar QAction:hover {{
                 background: {t["hover"]};
                 border-radius: 5px;
+            }}
+            QToolBar QAction:disabled {{
+                opacity: 0.5;
             }}
             QScrollBar:vertical {{
                 background: {t["bg_secondary"]};
@@ -477,20 +506,13 @@ class MessengerWindow(QMainWindow):
 
     def toggle_chat_ui(self, visible):
         """Показывает или скрывает элементы интерфейса чата"""
-        # Скрываем/показываем toolbar
-        self.toolbar.setVisible(visible)
-        
-        # Скрываем/показываем заголовок чата
+        # Скрываем/показываем элементы чата
         self.avatar.setVisible(visible)
         self.header.setVisible(visible)
         self.chat_call_button.setVisible(visible)
-        
-        # Скрываем/показываем сообщения и поле ввода
         self.messages.setVisible(visible)
         self.input.setVisible(visible)
         self.send_button.setVisible(visible)
-        
-        # Скрываем/показываем статус
         self.status.setVisible(visible)
 
     def run_net(self, factory):
@@ -506,17 +528,22 @@ class MessengerWindow(QMainWindow):
         for chat in chats:
             if query and query not in chat.contact_name.lower() and query not in chat.last_message.lower():
                 continue
-            item = QListWidgetItem(f"{chat.contact_name}\n{chat.last_message[:60]}")
+            # Показываем имя контакта и последнее сообщение
+            last_msg = chat.last_message[:50] if chat.last_message else "Нет сообщений"
+            item = QListWidgetItem(f"{chat.contact_name}\n{last_msg}")
             item.setData(Qt.UserRole, chat)
             self.chat_list.addItem(item)
 
     def add_contact(self):
-        name, ok = QInputDialog.getText(self, "Контакт", "Имя:")
-        if not ok or not name.strip(): return
-        ip, ok = QInputDialog.getText(self, "Radmin VPN IP", "IP адрес друга:")
-        if not ok or not ip.strip(): return
+        name, ok = QInputDialog.getText(self, "Новый контакт", "Введите имя контакта:")
+        if not ok or not name.strip(): 
+            return
+        ip, ok = QInputDialog.getText(self, "Radmin VPN IP", "Введите IP адрес контакта:")
+        if not ok or not ip.strip(): 
+            return
         asyncio.run(self.engine.create_chat(name, ip))
         self.refresh_chats()
+        QMessageBox.information(self, "Успешно", f"Контакт '{name}' добавлен!")
 
     def open_selected_chat(self):
         items = self.chat_list.selectedItems()
@@ -525,7 +552,7 @@ class MessengerWindow(QMainWindow):
         chat = items[0].data(Qt.UserRole)
         self.current_chat, self.current_contact = chat.id, chat.contact_id
         self.avatar.setText(chat.contact_name[:1].upper() if chat.contact_name else "👤")
-        self.header.setText(f"<b>{chat.contact_name}</b><br><span style='color:#8aa2b6'>Radmin VPN: {chat.contact_ip}</span>")
+        self.header.setText(f"<b>{chat.contact_name}</b><br><span style='color:#8aa2b6; font-size: 12px;'>Radmin VPN: {chat.contact_ip}</span>")
         self.chat_call_button.setEnabled(True)
         self.load_messages()
         self.start_text(chat.contact_ip)
@@ -541,7 +568,8 @@ class MessengerWindow(QMainWindow):
 
     def load_messages(self):
         self.messages.clear()
-        if not self.current_chat: return
+        if not self.current_chat: 
+            return
         show_timestamps = self.settings.get("show_timestamps", True)
         max_messages = self.settings.get("max_messages", 200)
         
@@ -568,7 +596,8 @@ class MessengerWindow(QMainWindow):
 
     def send_message(self):
         text = self.input.text().strip()
-        if not text or not self.current_chat: return
+        if not text or not self.current_chat: 
+            return
         message_id = asyncio.run(self.engine.send_message(text, self.current_chat, self.current_contact, status="queued"))
         self.input.clear()
         self.load_messages()
@@ -645,7 +674,7 @@ class MessengerWindow(QMainWindow):
         self.chat_list.clearSelection()
         self.messages.clear()
         self.avatar.setText("💬")
-        self.header.setText("Выберите чат или добавьте контакт Radmin VPN")
+        self.header.setText("Выберите чат или создайте новый контакт")
         self.chat_call_button.setEnabled(False)
         self.status.setText("Оффлайн")
         # Скрываем элементы чата
@@ -815,8 +844,8 @@ class MessengerWindow(QMainWindow):
         if close_window:
             QTimer.singleShot(0, self._close_call_window)
         else:
-            self.call_window = None
-
+            self.call_window = None    
+            
     def closeEvent(self, event):
         self.save_settings()
         self.ringtone.stop()
